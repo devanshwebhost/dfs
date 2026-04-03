@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect } from 'react';
-import { Users, UtensilsCrossed, LayoutDashboard, UserSquare2, ClipboardCheck, ReceiptIndianRupee, Lock, Play, TrendingUp, CheckCircle, Trash2, History, X, Calendar as CalendarIcon, Download, Menu } from 'lucide-react';
+import { Users, UtensilsCrossed, LayoutDashboard, UserSquare2, ClipboardCheck, ReceiptIndianRupee, Lock, Play, TrendingUp, CheckCircle, Trash2, History, X, Calendar as CalendarIcon, Download, Menu, RefreshCw } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -97,9 +97,17 @@ export default function TiffinManager() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const handleUnlock = () => {
-    if (password === process.env.NEXT_PUBLIC_APP_PASSWORD) setIsUnlocked(true);
-    else alert("Wrong Password! Check .env.local");
+    if (password === process.env.NEXT_PUBLIC_APP_PASSWORD) {
+      setIsUnlocked(true);
+      localStorage.setItem('dfs_auth', 'true');
+    } else {
+      alert("Wrong Password! Check .env.local");
+    }
   };
+
+  useEffect(() => {
+    if (localStorage.getItem('dfs_auth') === 'true') setIsUnlocked(true);
+  }, []);
 
   if (!isUnlocked) {
     return (
@@ -158,7 +166,7 @@ export default function TiffinManager() {
           <div className="w-8"></div> {/* Spacer for centering */}
         </header>
 
-        <div className="p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto w-full flex-1">
+        <div className="p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto w-full flex-1 relative">
           {activeTab === 'dashboard' && <DashboardTab />}
           {activeTab === 'customers' && <CustomersTab />}
           {activeTab === 'review' && <ReviewTab />}
@@ -166,7 +174,7 @@ export default function TiffinManager() {
         </div>
       </main>
 
-      {/* MOBILE BOTTOM NAV (Hidden on large screens) */}
+      {/* MOBILE BOTTOM NAV */}
       <nav className="lg:hidden fixed bottom-0 w-full bg-white border-t-2 border-gray-300 flex justify-around p-2 sm:p-3 z-20 shadow-[0_-10px_15px_rgba(0,0,0,0.1)] pb-safe">
         <BottomNavItem icon={<LayoutDashboard/>} label="Home" tabName="dashboard" activeTab={activeTab} setActiveTab={setActiveTab} />
         <BottomNavItem icon={<UserSquare2/>} label="Clients" tabName="customers" activeTab={activeTab} setActiveTab={setActiveTab} />
@@ -182,17 +190,28 @@ export default function TiffinManager() {
 // ==========================================
 function DashboardTab() {
   const [stats, setStats] = useState({ activeCustomers: 0, todayTotal: 0, todayLunch: 0, todayDinner: 0, monthlyRevenue: 0 });
-  const [loading, setLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(true);
   const [generating, setGenerating] = useState(false);
 
-  const fetchStats = async () => {
-    try {
-      const res = await fetch('/api/dashboard');
-      const data = await res.json();
-      if (!data.error) setStats(data);
-    } catch (e) { console.error(e); } finally { setLoading(false); }
-  };
-  useEffect(() => { fetchStats(); }, []);
+  useEffect(() => {
+    // 1. Instant Load from LocalStorage
+    const cached = localStorage.getItem('dfs_dashboard_stats');
+    if (cached) setStats(JSON.parse(cached));
+
+    // 2. Fetch fresh data in background (Bypass Cache)
+    const fetchStats = async () => {
+      try {
+        const res = await fetch(`/api/dashboard?t=${new Date().getTime()}`, { cache: 'no-store' });
+        const data = await res.json();
+        if (!data.error) {
+          setStats(data);
+          localStorage.setItem('dfs_dashboard_stats', JSON.stringify(data));
+        }
+      } catch (e) { console.error(e); } 
+      finally { setIsSyncing(false); }
+    };
+    fetchStats();
+  }, []);
 
   const generate = async (type: 'lunch' | 'dinner') => {
     setGenerating(true);
@@ -202,21 +221,29 @@ function DashboardTab() {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, 
         body: JSON.stringify({ mealType: type, targetDate: todayStr }),
       });
-      if (res.ok) { alert(`${type.toUpperCase()} Generated for Today!`); fetchStats(); } 
+      if (res.ok) { 
+        alert(`${type.toUpperCase()} Generated for Today!`); 
+        // Force refresh after generation
+        const freshRes = await fetch(`/api/dashboard?t=${new Date().getTime()}`, { cache: 'no-store' });
+        const data = await freshRes.json();
+        setStats(data);
+        localStorage.setItem('dfs_dashboard_stats', JSON.stringify(data));
+      } 
       else alert(`Error: Shayad aaj ka ${type} pehle hi generate ho chuka hai!`);
     } catch (e) { alert("Network Error"); }
     setGenerating(false);
   };
 
-  if (loading) return <div className="text-center font-black text-xl text-gray-500 mt-20 flex items-center justify-center h-40">Loading Stats...</div>;
-
   return (
     <div className="animate-in fade-in duration-200">
-      <h2 className="text-2xl sm:text-3xl font-black mb-4 sm:mb-6 hidden lg:block text-black">Dashboard Overview</h2>
+      <div className="flex justify-between items-center mb-4 sm:mb-6">
+        <h2 className="text-2xl sm:text-3xl font-black text-black hidden lg:block">Dashboard Overview</h2>
+        {isSyncing && <span className="text-xs font-bold text-gray-400 flex items-center gap-1 animate-pulse"><RefreshCw size={12} className="animate-spin"/> Syncing Live Data...</span>}
+      </div>
       
       <div className="bg-green-700 p-5 sm:p-8 rounded-2xl sm:rounded-3xl text-white mb-6 shadow-lg border-2 border-green-800 relative overflow-hidden">
         <div className="relative z-10">
-          <p className="text-green-100 font-bold mb-1 sm:mb-2 text-sm sm:text-base">Expected Kamai (This Month)</p>
+          <p className="text-green-100 font-bold mb-1 sm:mb-2 text-sm sm:text-base">TOTAL (This Month)</p>
           <div className="flex justify-between items-end">
             <h2 className="text-4xl sm:text-5xl lg:text-6xl font-black text-white leading-none">
               ₹{stats.monthlyRevenue.toLocaleString('en-IN')}
@@ -224,15 +251,14 @@ function DashboardTab() {
             <TrendingUp size={48} className="text-white opacity-90 hidden sm:block" />
           </div>
         </div>
-        {/* Decorative circle */}
         <div className="absolute -right-10 -top-10 w-40 h-40 bg-white opacity-10 rounded-full blur-2xl pointer-events-none"></div>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5 mb-6">
         <StatBox icon={<Users className="text-green-700"/>} value={stats.activeCustomers} label="Active Clients" />
-        <StatBox icon={<UtensilsCrossed className="text-green-700"/>} value={stats.todayTotal} label="Today's Tiffins" />
+        <StatBox icon={<UtensilsCrossed className="text-green-700"/>} value={stats.todayTotal} label="Total Today" />
         <StatBox value={stats.todayLunch} label="Lunch Gen." isSmall />
-        <StatBox value={stats.todayDinner} label="Dinner Pend." isSmall />
+        <StatBox value={stats.todayDinner} label="Dinners Today" isSmall />
       </div>
 
       <div className="bg-white p-5 sm:p-6 rounded-2xl sm:rounded-3xl border-2 border-gray-200 shadow-sm">
@@ -255,7 +281,7 @@ function DashboardTab() {
 // ==========================================
 function CustomersTab() {
   const [customers, setCustomers] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(true);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [defaultLunch, setDefaultLunch] = useState(1);
@@ -268,34 +294,55 @@ function CustomersTab() {
   const [pdfStart, setPdfStart] = useState('');
   const [pdfEnd, setPdfEnd] = useState('');
 
-  const fetchCustomers = async () => {
-    const res = await fetch('/api/customers');
-    const data = await res.json();
-    setCustomers(Array.isArray(data) ? data : []);
-    setLoading(false);
-  };
-  useEffect(() => { fetchCustomers(); }, []);
+  useEffect(() => {
+    const cached = localStorage.getItem('dfs_customers');
+    if (cached) setCustomers(JSON.parse(cached));
+
+    const fetchCustomers = async () => {
+      try {
+        const res = await fetch(`/api/customers?t=${Date.now()}`, { cache: 'no-store' });
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setCustomers(data);
+          localStorage.setItem('dfs_customers', JSON.stringify(data));
+        }
+      } catch(e) {}
+      setIsSyncing(false);
+    };
+    fetchCustomers();
+  }, []);
 
   const addCustomer = async (e: any) => {
     e.preventDefault();
     if(!name || !phone) return alert("Name aur Phone number zaroori hai!");
-    const res = await fetch('/api/customers', {
+    
+    // Optimistic UI Add
+    const tempCustomer = { _id: Date.now().toString(), name, phone, defaultLunch, defaultDinner, price: 70 };
+    setCustomers(prev => [...prev, tempCustomer]);
+
+    await fetch('/api/customers', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, phone, defaultLunch, defaultDinner, price: 70 })
     });
-    if (res.ok) { setName(''); setPhone(''); fetchCustomers(); alert("Customer Added!"); }
+    setName(''); setPhone(''); 
+    
+    // Fetch fresh after adding
+    const res = await fetch(`/api/customers?t=${Date.now()}`);
+    const data = await res.json();
+    setCustomers(data);
+    localStorage.setItem('dfs_customers', JSON.stringify(data));
   };
 
   const deleteCustomer = async (id: string) => {
     if (!window.confirm("Are you sure? Ye hamesha ke liye delete ho jayega!")) return;
+    setCustomers(prev => prev.filter(c => c._id !== id)); // Optimistic UI
     await fetch(`/api/customers/${id}`, { method: 'DELETE' });
-    fetchCustomers();
   };
 
   const openHistory = async (customer: any) => {
     setSelectedCustomer(customer);
     setHistoryLoading(true);
-    const res = await fetch(`/api/logs/customer/${customer._id}`);
+    const res = await fetch(`/api/logs/customer/${customer._id}?t=${Date.now()}`);
     const data = await res.json();
     
     const logsArray = Array.isArray(data) ? data : [];
@@ -315,7 +362,10 @@ function CustomersTab() {
 
   return (
     <div className="animate-in fade-in duration-200">
-      <h2 className="text-xl sm:text-2xl lg:text-3xl font-black mb-4 sm:mb-6 text-black">Manage Customers</h2>
+      <div className="flex justify-between items-center mb-4 sm:mb-6">
+        <h2 className="text-xl sm:text-2xl lg:text-3xl font-black text-black">Manage Customers</h2>
+        {isSyncing && <RefreshCw size={16} className="text-gray-400 animate-spin"/>}
+      </div>
       
       <form onSubmit={addCustomer} className="bg-white p-4 sm:p-5 rounded-2xl shadow-sm border-2 border-gray-200 mb-6 sm:mb-8 flex flex-col gap-3 sm:gap-4">
         <div className="flex flex-col sm:flex-row gap-3">
@@ -339,8 +389,7 @@ function CustomersTab() {
       </form>
 
       <div className="bg-white rounded-2xl border-2 border-gray-200 shadow-sm overflow-hidden mb-8">
-        {loading ? <p className="p-8 text-center font-bold text-gray-500">Loading clients...</p> : 
-          customers.length === 0 ? <p className="p-8 text-center font-bold text-gray-500">No customers yet. Add one above.</p> :
+        {customers.length === 0 && !isSyncing ? <p className="p-8 text-center font-bold text-gray-500">No customers yet. Add one above.</p> :
           <div className="divide-y-2 divide-gray-100">
             {customers.map((c: any) => (
               <div key={c._id} className="p-4 sm:p-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-0 hover:bg-gray-50 transition-colors">
@@ -366,9 +415,7 @@ function CustomersTab() {
       {selectedCustomer && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex justify-center items-end sm:items-center p-0 sm:p-4 z-50">
           <div className="bg-white rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 w-full max-w-lg border-t-4 sm:border-4 border-gray-300 h-[85vh] sm:h-auto sm:max-h-[90vh] flex flex-col shadow-2xl animate-in slide-in-from-bottom-4 sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-200">
-            
             <div className="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-4 sm:hidden"></div>
-
             <div className="flex justify-between items-center mb-4 border-b-2 border-gray-100 pb-4">
               <div>
                 <h3 className="font-black text-xl sm:text-2xl line-clamp-1">{selectedCustomer.name}'s History</h3>
@@ -437,7 +484,7 @@ function ReviewTab() {
   const [customers, setCustomers] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [loading, setLoading] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(true);
 
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
   const [historyRaw, setHistoryRaw] = useState<any[]>([]);
@@ -446,39 +493,62 @@ function ReviewTab() {
   const [pdfStart, setPdfStart] = useState('');
   const [pdfEnd, setPdfEnd] = useState('');
 
-  const fetchData = async (targetDate: string) => {
-    setLoading(true);
-    try {
-      const [custRes, logsRes] = await Promise.all([ fetch('/api/customers'), fetch(`/api/logs?date=${targetDate}`) ]);
-      const customersData = await custRes.json();
-      const logsData = await logsRes.json();
-      setCustomers(Array.isArray(customersData) ? customersData : []);
-      setLogs(Array.isArray(logsData) ? logsData : []);
-    } catch (e) { console.error("Error fetching data"); }
-    setLoading(false);
-  };
-  useEffect(() => { fetchData(date); }, [date]);
+  useEffect(() => {
+    // 1. Instant Load cache
+    const cachedC = localStorage.getItem('dfs_customers');
+    if (cachedC) setCustomers(JSON.parse(cachedC));
+
+    const cachedLogs = localStorage.getItem(`dfs_logs_${date}`);
+    if (cachedLogs) setLogs(JSON.parse(cachedLogs));
+
+    // 2. Fetch fresh
+    const fetchData = async () => {
+      setIsSyncing(true);
+      try {
+        const [custRes, logsRes] = await Promise.all([ 
+          fetch(`/api/customers?t=${Date.now()}`, { cache: 'no-store' }), 
+          fetch(`/api/logs?date=${date}&t=${Date.now()}`, { cache: 'no-store' }) 
+        ]);
+        const customersData = await custRes.json();
+        const logsData = await logsRes.json();
+        
+        if (Array.isArray(customersData)) {
+          setCustomers(customersData);
+          localStorage.setItem('dfs_customers', JSON.stringify(customersData));
+        }
+        if (Array.isArray(logsData)) {
+          setLogs(logsData);
+          localStorage.setItem(`dfs_logs_${date}`, JSON.stringify(logsData));
+        }
+      } catch (e) { console.error("Error fetching data"); }
+      setIsSyncing(false);
+    };
+    fetchData();
+  }, [date]);
 
   const handleUpdate = async (customerId: string, mealType: 'lunch'|'dinner', currentQty: number, change: number) => {
     const newQty = currentQty + change;
     if (newQty < 0) return;
+    
+    // Optimistic UI updates instantly
     setLogs((prev: any) => {
+      let updatedLogs = [...prev];
       const existingIndex = prev.findIndex((l: any) => l.customerId?._id === customerId && l.mealType === mealType);
-      if (existingIndex >= 0) {
-        const newLogs = [...prev];
-        newLogs[existingIndex].quantity = newQty;
-        return newLogs;
-      } else {
-        return [...prev, { customerId: { _id: customerId }, date, mealType, quantity: newQty }];
-      }
+      
+      if (existingIndex >= 0) updatedLogs[existingIndex].quantity = newQty;
+      else updatedLogs.push({ customerId: { _id: customerId }, date, mealType, quantity: newQty });
+      
+      localStorage.setItem(`dfs_logs_${date}`, JSON.stringify(updatedLogs)); // Update cache immediately
+      return updatedLogs;
     });
+
     await fetch('/api/logs/upsert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerId, date, mealType, quantity: newQty }) });
   };
 
   const openHistory = async (customer: any) => {
     setSelectedCustomer(customer);
     setHistoryLoading(true);
-    const res = await fetch(`/api/logs/customer/${customer._id}`);
+    const res = await fetch(`/api/logs/customer/${customer._id}?t=${Date.now()}`);
     const data = await res.json();
     
     const logsArray = Array.isArray(data) ? data : [];
@@ -498,7 +568,10 @@ function ReviewTab() {
 
   return (
     <div className="animate-in fade-in duration-200">
-      <h2 className="text-xl sm:text-2xl lg:text-3xl font-black mb-4 sm:mb-6 text-black">Daily Tiffin Review</h2>
+      <div className="flex justify-between items-center mb-4 sm:mb-6">
+        <h2 className="text-xl sm:text-2xl lg:text-3xl font-black text-black">Daily Tiffin Review</h2>
+        {isSyncing && <RefreshCw size={16} className="text-gray-400 animate-spin"/>}
+      </div>
       
       <div className="bg-white p-4 sm:p-5 rounded-2xl shadow-sm border-2 border-gray-200 mb-6 flex flex-col sm:flex-row sm:items-center justify-between sticky top-0 z-10 gap-3 sm:gap-0">
         <label className="font-black text-sm sm:text-base lg:text-lg flex items-center gap-2 text-gray-600 uppercase tracking-wider">
@@ -512,8 +585,7 @@ function ReviewTab() {
         />
       </div>
       
-      {loading ? <p className="font-bold text-center mt-10 text-gray-500">Loading records...</p> : 
-        customers.length === 0 ? <p className="text-center font-bold mt-10 text-gray-500">No active clients found.</p> :
+      {customers.length === 0 && !isSyncing ? <p className="text-center font-bold mt-10 text-gray-500">No active clients found.</p> :
         <div className="space-y-4">
           {customers.map((customer: any) => {
             const lunchLog = logs.find((l: any) => l.customerId?._id === customer._id && l.mealType === 'lunch');
@@ -535,7 +607,6 @@ function ReviewTab() {
                 </div>
 
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
-                  {/* Lunch Control */}
                   <div className="flex items-center justify-between sm:justify-start gap-4 bg-orange-50/50 sm:bg-transparent p-2 sm:p-0 rounded-xl sm:rounded-none border-2 border-orange-100/50 sm:border-none">
                     <span className="font-black text-[11px] sm:text-xs text-orange-600 uppercase tracking-widest w-14 sm:w-auto">Lunch</span>
                     <div className="flex items-center gap-1 sm:gap-2 bg-white p-1 rounded-full border-2 border-gray-200 shadow-sm">
@@ -547,7 +618,6 @@ function ReviewTab() {
 
                   <div className="hidden sm:block w-0.5 h-10 bg-gray-200 mx-2"></div>
 
-                  {/* Dinner Control */}
                   <div className="flex items-center justify-between sm:justify-start gap-4 bg-indigo-50/50 sm:bg-transparent p-2 sm:p-0 rounded-xl sm:rounded-none border-2 border-indigo-100/50 sm:border-none">
                     <span className="font-black text-[11px] sm:text-xs text-indigo-600 uppercase tracking-widest w-14 sm:w-auto">Dinner</span>
                     <div className="flex items-center gap-1 sm:gap-2 bg-white p-1 rounded-full border-2 border-gray-200 shadow-sm">
@@ -639,20 +709,40 @@ function ReviewTab() {
 function BillingTab() {
   const [bills, setBills] = useState([]);
   const [currentMonth, setCurrentMonth] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(true);
 
-  const fetchBills = async () => {
-    try {
-      const res = await fetch('/api/billing');
-      const data = await res.json();
-      if (data.bills) { setBills(data.bills); setCurrentMonth(data.currentMonth); }
-    } catch (e) { console.error(e); } finally { setLoading(false); }
-  };
-  useEffect(() => { fetchBills(); }, []);
+  useEffect(() => {
+    const cached = localStorage.getItem('dfs_bills');
+    const cachedMonth = localStorage.getItem('dfs_bills_month');
+    if (cached && cachedMonth) {
+      setBills(JSON.parse(cached));
+      setCurrentMonth(cachedMonth);
+    }
+
+    const fetchBills = async () => {
+      try {
+        const res = await fetch(`/api/billing?t=${Date.now()}`, { cache: 'no-store' });
+        const data = await res.json();
+        if (data.bills) { 
+          setBills(data.bills); 
+          setCurrentMonth(data.currentMonth); 
+          localStorage.setItem('dfs_bills', JSON.stringify(data.bills));
+          localStorage.setItem('dfs_bills_month', data.currentMonth);
+        }
+      } catch (e) { console.error(e); } 
+      finally { setIsSyncing(false); }
+    };
+    fetchBills();
+  }, []);
 
   const markAsPaid = async (customerId: string) => {
     if(!window.confirm("Mark as PAID?")) return;
-    setBills((prev: any) => prev.map((b: any) => b.id === customerId ? { ...b, isPaid: true } : b));
+    
+    // Optimistic UI Update & Cache Save
+    const newBills: any = bills.map((b: any) => b.id === customerId ? { ...b, isPaid: true } : b);
+    setBills(newBills);
+    localStorage.setItem('dfs_bills', JSON.stringify(newBills));
+
     await fetch('/api/billing/pay', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerId, month: currentMonth }) });
   };
 
@@ -663,16 +753,18 @@ function BillingTab() {
 
   return (
     <div className="animate-in fade-in duration-200">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-3">
-        <h2 className="text-2xl sm:text-3xl font-black text-black">Monthly Billing</h2>
-        <div className="bg-white px-4 py-2 rounded-xl border-2 border-gray-200 shadow-sm">
-          <span className="text-gray-400 text-xs font-bold uppercase tracking-wider mr-2">Cycle</span>
-          <span className="font-black text-gray-800">{currentMonth}</span>
+      <div className="flex justify-between items-center mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <h2 className="text-2xl sm:text-3xl font-black text-black">Monthly Billing</h2>
+          <div className="bg-white px-4 py-2 rounded-xl border-2 border-gray-200 shadow-sm w-fit">
+            <span className="text-gray-400 text-xs font-bold uppercase tracking-wider mr-2">Cycle</span>
+            <span className="font-black text-gray-800">{currentMonth}</span>
+          </div>
         </div>
+        {isSyncing && <RefreshCw size={16} className="text-gray-400 animate-spin"/>}
       </div>
       
-      {loading ? <p className="text-center font-bold text-gray-400 mt-10">Calculating Bills...</p> : 
-        bills.length === 0 ? <p className="text-center font-bold text-gray-400 mt-10">No bills for this month yet.</p> :
+      {bills.length === 0 && !isSyncing ? <p className="text-center font-bold text-gray-400 mt-10">No bills for this month yet.</p> :
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {bills.map((bill: any) => (
             bill.isPaid ? (
